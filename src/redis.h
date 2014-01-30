@@ -235,6 +235,7 @@
 #define REDIS_FORCE_REPL (1<<15)  /* Force replication of current cmd. */
 #define REDIS_PRE_PSYNC (1<<16)   /* Instance don't understand PSYNC. */
 #define REDIS_READONLY (1<<17)    /* Cluster client is in read-only state. */
+#define REDIS_PUBSUB_SCRIPT (1<<18) /* Runs detached to consume pubsub pubs */
 
 /* Client block type (btype field in client structure)
  * if REDIS_BLOCKED flag is set. */
@@ -527,6 +528,7 @@ typedef struct redisClient {
     list *watched_keys;     /* Keys WATCHED for MULTI/EXEC CAS */
     dict *pubsub_channels;  /* channels a client is interested in (SUBSCRIBE) */
     list *pubsub_patterns;  /* patterns a client is interested in (SUBSCRIBE) */
+    char *scriptName;       /* if this client is only a script, run by name */
 
     /* Response buffer */
     int bufpos;
@@ -828,6 +830,7 @@ struct redisServer {
     redisClient *lua_caller;   /* The client running EVAL right now, or NULL */
     dict *lua_scripts;         /* A dictionary of SHA1 -> Lua scripts */
     dict *lua_name_sha;        /* A dictionary of Name -> SHA1 Lua script IDs */
+    dict *script_name_clients; /* A dictionary of Name -> Client pointers */
     mstime_t lua_time_limit;  /* Script timeout in milliseconds */
     mstime_t lua_time_start;  /* Start time of script, milliseconds time */
     int lua_write_dirty;  /* True if a write command was called during the
@@ -958,6 +961,8 @@ void redisSetProcTitle(char *title);
 
 /* networking.c -- Networking and Client related operations */
 redisClient *createClient(int fd);
+redisClient *createScriptClient();
+redisClient *clientForScript(char *name);
 void closeTimedoutClients(void);
 void freeClient(redisClient *c);
 void freeClientAsync(redisClient *c);
@@ -1426,6 +1431,10 @@ void subscribeCommand(redisClient *c);
 void unsubscribeCommand(redisClient *c);
 void psubscribeCommand(redisClient *c);
 void punsubscribeCommand(redisClient *c);
+void subscribeScriptCommand(redisClient *c);
+void unsubscribeScriptCommand(redisClient *c);
+void psubscribeScriptCommand(redisClient *c);
+void punsubscribeScriptCommand(redisClient *c);
 void publishCommand(redisClient *c);
 void pubsubCommand(redisClient *c);
 void watchCommand(redisClient *c);
@@ -1441,7 +1450,9 @@ void objectCommand(redisClient *c);
 void clientCommand(redisClient *c);
 void evalCommand(redisClient *c);
 void evalShaCommand(redisClient *c);
+void evalNameWithArgs(redisClient *c, char *name, int argc, ...);
 void evalNameCommand(redisClient *c);
+void evalName(redisClient *c, char *name);
 void scriptCommand(redisClient *c);
 void timeCommand(redisClient *c);
 void bitopCommand(redisClient *c);

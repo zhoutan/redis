@@ -545,7 +545,12 @@ void scriptingInit(void) {
      * This is useful for replication, as we need to replicate EVALSHA
      * as EVAL, so we need to remember the associated script. */
     server.lua_scripts = dictCreate(&shaScriptObjectDictType,NULL);
+
+    /* Dictionary mapping registered script Names to script SHAs */
     server.lua_name_sha = dictCreate(&dbDictType,NULL);
+
+    /* Dictionary mapping script Name to the fake client using Name */
+    server.script_name_clients = dictCreate(&dbDictType,NULL);
 
     /* Register the redis commands table and fields */
     lua_newtable(lua);
@@ -664,6 +669,7 @@ void scriptingInit(void) {
 void scriptingRelease(void) {
     dictRelease(server.lua_scripts);
     dictRelease(server.lua_name_sha);
+    dictRelease(server.script_name_clients);
     lua_close(server.lua);
 }
 
@@ -965,16 +971,6 @@ void evalGenericCommand(redisClient *c, int evalsha) {
     }
 }
 
-/* Move argv[1] to be the SHA found from <name> */
-/* evalGeneric assumes we're running "evalsha <SHA>"
-   By making argv[1] the SHA, we are essentially running
-   "evalsha <SHA>" for the user. */
-void evalSha(redisClient *c, char *sha) {
-    /* verify argv[1] will always exist on the client */
-    c->argv[1]->ptr = sha;
-    evalGenericCommand(c,1);
-}
-
 void evalCommand(redisClient *c) {
     evalGenericCommand(c,0);
 }
@@ -991,13 +987,83 @@ void evalShaCommand(redisClient *c) {
     evalGenericCommand(c,1);
 }
 
-void evalNameCommand(redisClient *c) {
-    sds sha = dictFetchValue(server.lua_name_sha,c->argv[1]->ptr);
-    if (!sha || sdslen(sha) != 40) {
-        addReply(c, shared.noscripterr);
-        return;
+void evalName(redisClient *c, char *name) {
+    robj *shaObj;
+    int localHash = 0;
+
+    /* if someone gives us a Name as a 40 character string,
+       check to see if it's a valid script sha.  If so,
+       use the given script hash as the hash of the script
+       without using a name indirection. */
+    if (sdslen(name) == 40 &&
+        dictFind(server.lua_scripts,name)) {
+        shaObj = createStringObject(name, 40);
+        localHash = 1;
     }
-    evalSha(c, sha);
+    else {
+        shaObj = dictFetchValue(server.lua_name_sha,name);
+        if (!shaObj || sdslen(shaObj->ptr) != 40) {
+            addReply(c, shared.noscripterr);
+            return;
+        }
+    }
+
+    /* rewrite c->argv[1]->ptr to be sha */
+    rewriteClientCommandArgument(c,1,shaObj);
+    /* we need to decrRef if we *created* a string above.
+       If we are only using an existing found string,
+       it will already have a correct ref count. */
+    if (localHash) decrRefCount(shaObj);
+    evalGenericCommand(c,1);
+}
+
+/* Execute a named script with these given arguments.  Note:
+   Arguments are (robj *) and are limited to (max_args - 3)
+   because of how we initialize fields below.  If you find
+   a need for more arguments against a script, feel free to
+   increase max_args below. */
+void evalNameWithArgs(redisClient *c, char *name, int argc, ...) {
+    va_list ap;
+    int total_args = argc + 3;
+    int j;
+    int max_args = 6;
+
+    if (total_args > max_args) {
+        /* If you need more than 3 user arguments to a script, increase
+           max_args above */
+        redisPanic("named scripts require <= 3 arguments");
+    }
+
+    if (c->argc == 0) {
+        /* if argc == 0, then this is a fake client for
+           running a specific named lua script.  generate required
+           client parameters here since they don't already exist */
+        c->argv = zmalloc(sizeof(robj*)*max_args);
+        c->argv[0] = createStringObject("NOCOMMAND", 9);
+        c->argv[1] = createStringObject(NULL, 0);
+        /* we use 0 explicit keys here, making this implementation
+           of server-side pubsub scripting incompatible with a cluster
+           deployment (where you are required to delcare all keys
+           you will touch up front). */
+        c->argv[2] = createStringObject("0", 1);
+        for (j = 3; j < max_args; j++) {
+            /* initial conditions */
+            c->argv[j] = createStringObject(NULL, 0);
+        }
+    }
+
+    c->argc = total_args;
+    va_start(ap, argc);
+    for (j = 3; j < total_args; j++) {
+        rewriteClientCommandArgument(c,j,va_arg(ap, robj *));
+    }
+    va_end(ap);
+
+    evalName(c, name);
+}
+
+void evalNameCommand(redisClient *c) {
+    evalName(c, c->argv[1]->ptr);
 }
 
 /* We replace math.random() with our implementation that is not affected
@@ -1079,7 +1145,8 @@ void scriptCommand(redisClient *c) {
         forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
     } else if (c->argc == 4 && !strcasecmp(c->argv[1]->ptr,"name")) {
         sds scriptName = c->argv[2]->ptr;
-        sds targetSha = c->argv[3]->ptr;
+        robj *targetShaObj = c->argv[3];
+        sds targetSha = targetShaObj->ptr;
 
         /* Check if target hash is exactly 40 characters and actually exists */
         if (sdslen(targetSha) != 40 ||
@@ -1088,26 +1155,33 @@ void scriptCommand(redisClient *c) {
             return;
         }
 
-        dictAdd(server.lua_name_sha,sdsdup(scriptName),sdsdup(targetSha));
+        /* Attempt to delete existing name so we don't leak memory when
+           overriding existing names. */
+        dictDelete(server.lua_name_sha, scriptName);
+
+        /* Add name -> sha pair and increase sha ref count so it doesn't
+           get auto-deleted too early. */
+        dictAdd(server.lua_name_sha,sdsdup(scriptName),targetShaObj);
+        incrRefCount(targetShaObj);
 
         addReplyBulkCBuffer(c, scriptName, sdslen(scriptName));
         forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"getname")) {
         sds scriptName = c->argv[2]->ptr;
-        sds foundHash;
+        robj *foundHash;
 
         if ((foundHash = dictFetchValue(server.lua_name_sha,scriptName))) {
-            addReplyBulkCBuffer(c, foundHash, sdslen(foundHash));
+            addReplyBulkCBuffer(c, foundHash->ptr, sdslen(foundHash->ptr));
         }
         else {
             addReply(c, shared.noscripterr);
         }
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"delname")) {
         sds scriptName = c->argv[2]->ptr;
-        sds deletedHash;
+        robj *deletedHash;
 
         if ((deletedHash = dictFetchValue(server.lua_name_sha,scriptName))) {
-            addReplyBulkCBuffer(c, deletedHash, sdslen(deletedHash));
+            addReplyBulkCBuffer(c, deletedHash->ptr, sdslen(deletedHash->ptr));
         }
         else {
             addReply(c, shared.noscripterr);

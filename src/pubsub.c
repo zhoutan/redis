@@ -70,10 +70,12 @@ int pubsubSubscribeChannel(redisClient *c, robj *channel) {
         listAddNodeTail(clients,c);
     }
     /* Notify the client */
-    addReply(c,shared.mbulkhdr[3]);
-    addReply(c,shared.subscribebulk);
-    addReplyBulk(c,channel);
-    addReplyLongLong(c,dictSize(c->pubsub_channels)+listLength(c->pubsub_patterns));
+    if (!(c->flags & REDIS_PUBSUB_SCRIPT)) {
+        addReply(c,shared.mbulkhdr[3]);
+        addReply(c,shared.subscribebulk);
+        addReplyBulk(c,channel);
+        addReplyLongLong(c,dictSize(c->pubsub_channels)+listLength(c->pubsub_patterns));
+    }
     return retval;
 }
 
@@ -132,10 +134,12 @@ int pubsubSubscribePattern(redisClient *c, robj *pattern) {
         listAddNodeTail(server.pubsub_patterns,pat);
     }
     /* Notify the client */
-    addReply(c,shared.mbulkhdr[3]);
-    addReply(c,shared.psubscribebulk);
-    addReplyBulk(c,pattern);
-    addReplyLongLong(c,dictSize(c->pubsub_channels)+listLength(c->pubsub_patterns));
+    if (!(c->flags & REDIS_PUBSUB_SCRIPT)) {
+        addReply(c,shared.mbulkhdr[3]);
+        addReply(c,shared.psubscribebulk);
+        addReplyBulk(c,pattern);
+        addReplyLongLong(c,dictSize(c->pubsub_channels)+listLength(c->pubsub_patterns));
+    }
     return retval;
 }
 
@@ -233,10 +237,14 @@ int pubsubPublishMessage(robj *channel, robj *message) {
         while ((ln = listNext(&li)) != NULL) {
             redisClient *c = ln->value;
 
-            addReply(c,shared.mbulkhdr[3]);
-            addReply(c,shared.messagebulk);
-            addReplyBulk(c,channel);
-            addReplyBulk(c,message);
+            if (c->flags & REDIS_PUBSUB_SCRIPT) {
+                evalNameWithArgs(c, c->scriptName, 2, channel, message);
+            } else {
+                addReply(c,shared.mbulkhdr[3]);
+                addReply(c,shared.messagebulk);
+                addReplyBulk(c,channel);
+                addReplyBulk(c,message);
+            }
             receivers++;
         }
     }
@@ -251,11 +259,17 @@ int pubsubPublishMessage(robj *channel, robj *message) {
                                 sdslen(pat->pattern->ptr),
                                 (char*)channel->ptr,
                                 sdslen(channel->ptr),0)) {
-                addReply(pat->client,shared.mbulkhdr[4]);
-                addReply(pat->client,shared.pmessagebulk);
-                addReplyBulk(pat->client,pat->pattern);
-                addReplyBulk(pat->client,channel);
-                addReplyBulk(pat->client,message);
+                if (pat->client->flags & REDIS_PUBSUB_SCRIPT) {
+                    evalNameWithArgs(pat->client,
+                                     pat->client->scriptName,
+                                     3, channel, message, pat->pattern);
+                } else {
+                    addReply(pat->client,shared.mbulkhdr[4]);
+                    addReply(pat->client,shared.pmessagebulk);
+                    addReplyBulk(pat->client,pat->pattern);
+                    addReplyBulk(pat->client,channel);
+                    addReplyBulk(pat->client,message);
+                }
                 receivers++;
             }
         }
@@ -275,6 +289,20 @@ void subscribeCommand(redisClient *c) {
         pubsubSubscribeChannel(c,c->argv[j]);
 }
 
+void subscribeScriptCommand(redisClient *c) {
+    robj *channel = c->argv[1];
+    int j;
+    int subs = 0;
+
+    for (j = 2; j < c->argc; j++) {
+        char *script = c->argv[j]->ptr;
+        redisClient *scriptClient = clientForScript(script);
+
+        subs += pubsubSubscribeChannel(scriptClient,channel);
+   }
+   addReplyLongLong(c, subs);
+}
+
 void unsubscribeCommand(redisClient *c) {
     if (c->argc == 1) {
         pubsubUnsubscribeAllChannels(c,1);
@@ -286,11 +314,39 @@ void unsubscribeCommand(redisClient *c) {
     }
 }
 
+void unsubscribeScriptCommand(redisClient *c) {
+    robj *channel = c->argv[1];
+    int j;
+    int unsubs = 0;
+
+    for (j = 2; j < c->argc; j++) {
+        char *script = c->argv[j]->ptr;
+        redisClient *scriptClient = clientForScript(script);
+
+        unsubs += pubsubUnsubscribeChannel(scriptClient,channel,0);
+   }
+   addReplyLongLong(c, unsubs);
+}
+
 void psubscribeCommand(redisClient *c) {
     int j;
 
     for (j = 1; j < c->argc; j++)
         pubsubSubscribePattern(c,c->argv[j]);
+}
+
+void psubscribeScriptCommand(redisClient *c) {
+    robj *channel = c->argv[1];
+    int j;
+    int subs = 0;
+
+    for (j = 2; j < c->argc; j++) {
+        char *script = c->argv[j]->ptr;
+        redisClient *scriptClient = clientForScript(script);
+
+        subs += pubsubSubscribePattern(scriptClient,channel);
+   }
+   addReplyLongLong(c, subs);
 }
 
 void punsubscribeCommand(redisClient *c) {
@@ -304,8 +360,22 @@ void punsubscribeCommand(redisClient *c) {
     }
 }
 
+void punsubscribeScriptCommand(redisClient *c) {
+    robj *channel = c->argv[1];
+    int j;
+    int unsubs = 0;
+
+    for (j = 2; j < c->argc; j++) {
+        char *script = c->argv[j]->ptr;
+        redisClient *scriptClient = clientForScript(script);
+
+        unsubs += pubsubUnsubscribePattern(scriptClient,channel,0);
+   }
+   addReplyLongLong(c, unsubs);
+}
+
 void publishCommand(redisClient *c) {
-    int receivers = pubsubPublishMessage(c->argv[1],c->argv[2]);
+    int receivers = pubsubPublishMessage(c,c->argv[1],c->argv[2]);
     if (server.cluster_enabled)
         clusterPropagatePublish(c->argv[1],c->argv[2]);
     else

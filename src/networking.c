@@ -91,6 +91,7 @@ redisClient *createClient(int fd) {
     c->reqtype = 0;
     c->argc = 0;
     c->argv = NULL;
+    c->scriptName = NULL;
     c->cmd = c->lastcmd = NULL;
     c->multibulklen = 0;
     c->bulklen = -1;
@@ -123,6 +124,32 @@ redisClient *createClient(int fd) {
     if (fd != -1) listAddNodeTail(server.clients,c);
     initClientMultiState(c);
     return c;
+}
+
+redisClient *createScriptClient() {
+    redisClient *cli = createClient(-1);
+    cli->flags |= REDIS_PUBSUB_SCRIPT;
+    return cli;
+}
+
+redisClient *clientForScript(char *scriptName) {
+    redisClient *c;
+    robj *found;
+    if ((found = dictFetchValue(server.script_name_clients, scriptName))) {
+        return found->ptr;
+    } else {
+        robj *storeClient;
+        c = createScriptClient();
+        /* Create robj holding client pointer so we can store it in a dict */
+        storeClient = createObject(REDIS_STRING, c);
+        /* say this is an INT encoding so the dict doesn't free c on delete */
+        storeClient->encoding = REDIS_ENCODING_INT;
+        c->scriptName = sdsdup(scriptName);
+        /* store the client pointer in a scriptName -> Client dict */
+        dictAdd(server.script_name_clients, sdsdup(scriptName), storeClient);
+        return c;
+    }
+
 }
 
 /* This function is called every time we are going to transmit new data
@@ -753,6 +780,8 @@ void freeClient(redisClient *c) {
     /* Release other dynamically allocated client structure fields,
      * and finally release the client structure itself. */
     if (c->name) decrRefCount(c->name);
+    if (c->scriptName) sdsfree(c->scriptName);
+
     zfree(c->argv);
     freeClientMultiState(c);
     zfree(c);
