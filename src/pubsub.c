@@ -238,7 +238,7 @@ int pubsubPublishMessage(robj *channel, robj *message) {
             redisClient *c = ln->value;
 
             if (c->flags & REDIS_PUBSUB_SCRIPT) {
-                evalNameWithArgs(c, c->scriptName, 2, channel, message);
+                enqueueAsyncScript(c, c->scriptName, 2, channel, message);
             } else {
                 addReply(c,shared.mbulkhdr[3]);
                 addReply(c,shared.messagebulk);
@@ -260,9 +260,8 @@ int pubsubPublishMessage(robj *channel, robj *message) {
                                 (char*)channel->ptr,
                                 sdslen(channel->ptr),0)) {
                 if (pat->client->flags & REDIS_PUBSUB_SCRIPT) {
-                    evalNameWithArgs(pat->client,
-                                     pat->client->scriptName,
-                                     3, channel, message, pat->pattern);
+                    enqueueAsyncScript(pat->client, pat->client->scriptName,
+                                      3, channel, message, pat->pattern);
                 } else {
                     addReply(pat->client,shared.mbulkhdr[4]);
                     addReply(pat->client,shared.pmessagebulk);

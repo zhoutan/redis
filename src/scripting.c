@@ -1022,7 +1022,7 @@ void evalName(redisClient *c, char *name) {
    because of how we initialize fields below.  If you find
    a need for more arguments against a script, feel free to
    increase max_args below. */
-void evalNameWithArgs(redisClient *c, char *name, int argc, ...) {
+void evalNameWithArgs(redisClient *c, char *name, long argc, ...) {
     va_list ap;
     int total_args = argc + 3;
     int j;

@@ -840,6 +840,7 @@ struct redisServer {
     int lua_timedout;     /* True if we reached the time limit for script
                              execution. */
     int lua_kill;         /* Kill the script if true. */
+    list *async_scripts;   /* List of scripts to run during next cron loop. */
     /* Assert & bug reporting */
     char *assert_failed;
     char *assert_file;
@@ -1450,7 +1451,9 @@ void objectCommand(redisClient *c);
 void clientCommand(redisClient *c);
 void evalCommand(redisClient *c);
 void evalShaCommand(redisClient *c);
-void evalNameWithArgs(redisClient *c, char *name, int argc, ...);
+void evalNameWithArgs(redisClient *c, char *name, long argc, ...);
+void enqueueAsyncScript(redisClient *c, char *name, long argc, ...);
+void executeAsyncScripts();
 void evalNameCommand(redisClient *c);
 void evalName(redisClient *c, char *name);
 void scriptCommand(redisClient *c);

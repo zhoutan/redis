@@ -1107,6 +1107,9 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     /* We need to do a few operations on clients asynchronously. */
     clientsCron();
 
+    /* Execute queued lua scripts executed from pubsub */
+    executeAsyncScripts();
+
     /* Handle background operations on Redis databases. */
     databasesCron();
 
@@ -1220,6 +1223,92 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     server.cronloops++;
     return 1000/server.hz;
+}
+
+void executeAsyncScripts() {
+    if (!listLength(server.async_scripts)) {
+        return;
+    } else {
+        listNode *ln;
+        listIter li;
+        int j;
+
+        listRewind(server.async_scripts,&li);
+        while ((ln = listNext(&li)) != NULL) {
+            robj **scriptData = ln->value;
+
+            /* get client */
+            redisClient *c = scriptData[0]->ptr;
+
+            /* get script name */
+            char *scriptName = scriptData[1]->ptr;
+
+            /* get arg count */
+            long argc = (long)scriptData[2]->ptr;
+
+            /* get the DB for where this script was originally run */
+            c->db = (redisDb *)scriptData[3]->ptr;
+
+            /* execute script */
+            if (argc == 2) {
+                evalNameWithArgs(c, scriptName, argc,
+                                 scriptData[4], scriptData[5]);
+            } else if (argc == 3) {
+                evalNameWithArgs(c, scriptName, argc,
+                                 scriptData[4], scriptData[5], scriptData[6]);
+            }
+
+            /* clean up these used objects */
+            for (j = 0; j < argc + 4; j++) {
+                decrRefCount(scriptData[j]);
+            }
+
+            /* release our object holder */
+            zfree(scriptData);
+
+            /* delete from list of scripts to execute */
+            /* Yes, we can remove the element from the list
+               while we are iterating over the list. */
+            listDelNode(server.async_scripts, ln);
+        }
+    }
+}
+
+void enqueueAsyncScript(redisClient *c, char *scriptName, long argc, ...) {
+    va_list ap;
+    int j;
+    int total_args = argc + 4;
+    robj **args = zmalloc(sizeof(*args)*total_args);
+
+    if (!scriptName)
+        redisPanic("Async scripts must have a name or SHA provided.");
+
+    /* Store the client to run the script against */
+    args[0] = createObject(REDIS_STRING, c);
+    args[0]->encoding = REDIS_ENCODING_INT; /* don't let obj system free it */
+
+    /* Store the name of the script to run (not necessarily c->scriptName) */
+    args[1] = createStringObject(scriptName, sdslen(scriptName));
+
+    /* Store the argument count */
+    args[2] = createObject(REDIS_STRING, NULL);
+    args[2]->ptr = (void *)argc;
+    args[2]->encoding = REDIS_ENCODING_INT; /* again, don't free numbers */
+
+    /* Store pointer to the DB the client used for the eval/publish */
+    args[3] = createObject(REDIS_STRING, c->db);
+    args[3]->encoding = REDIS_ENCODING_INT;
+
+    /* create robj holder to recall this operation */
+    va_start(ap, argc);
+    for (j = 4; j < total_args; j++) {
+        args[j] = va_arg(ap, robj *);
+        incrRefCount(args[j]);
+    }
+    va_end(ap);
+
+    /* add operation to list of operations to do next cron */
+    listAddNodeTail(server.async_scripts, args);
 }
 
 /* This function gets called every time Redis is entering the
@@ -1714,6 +1803,7 @@ void initServer() {
     }
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = listCreate();
+    server.async_scripts = listCreate();
     listSetFreeMethod(server.pubsub_patterns,freePubsubPattern);
     listSetMatchMethod(server.pubsub_patterns,listMatchPubsubPattern);
     server.cronloops = 0;
