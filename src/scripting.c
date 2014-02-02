@@ -1144,49 +1144,50 @@ void scriptCommand(redisClient *c) {
         sdsfree(sha);
         forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
     } else if (c->argc == 4 && !strcasecmp(c->argv[1]->ptr,"name")) {
-        sds scriptName = c->argv[2]->ptr;
-        robj *targetShaObj = c->argv[3];
-        sds targetSha = targetShaObj->ptr;
+        sds script_name = c->argv[2]->ptr;
+        robj *target_sha_obj = c->argv[3];
+        sds target_sha = target_sha_obj->ptr;
 
         /* Check if target hash is exactly 40 characters and actually exists */
-        if (sdslen(targetSha) != 40 ||
-            dictFind(server.lua_scripts,targetSha) == NULL) {
+        if (sdslen(target_sha) != 40 ||
+            dictFind(server.lua_scripts,target_sha) == NULL) {
             addReply(c, shared.noscripterr);
             return;
         }
 
         /* Attempt to delete existing name so we don't leak memory when
            overriding existing names. */
-        dictDelete(server.lua_name_sha, scriptName);
+        dictDelete(server.lua_name_sha, script_name);
 
         /* Add name -> sha pair and increase sha ref count so it doesn't
            get auto-deleted too early. */
-        dictAdd(server.lua_name_sha,sdsdup(scriptName),targetShaObj);
-        incrRefCount(targetShaObj);
+        dictAdd(server.lua_name_sha,sdsdup(script_name),target_sha_obj);
+        incrRefCount(target_sha_obj);
 
-        addReplyBulkCBuffer(c, scriptName, sdslen(scriptName));
+        addReplyBulkCBuffer(c, script_name, sdslen(script_name));
         forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"getname")) {
-        sds scriptName = c->argv[2]->ptr;
-        robj *foundHash;
+        sds script_name = c->argv[2]->ptr;
+        robj *found_hash;
 
-        if ((foundHash = dictFetchValue(server.lua_name_sha,scriptName))) {
-            addReplyBulkCBuffer(c, foundHash->ptr, sdslen(foundHash->ptr));
+        if ((found_hash = dictFetchValue(server.lua_name_sha,script_name))) {
+            addReplyBulkCBuffer(c, found_hash->ptr, sdslen(found_hash->ptr));
         }
         else {
             addReply(c, shared.noscripterr);
         }
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"delname")) {
-        sds scriptName = c->argv[2]->ptr;
-        robj *deletedHash;
+        sds script_name = c->argv[2]->ptr;
+        robj *deleted_hash;
 
-        if ((deletedHash = dictFetchValue(server.lua_name_sha,scriptName))) {
-            addReplyBulkCBuffer(c, deletedHash->ptr, sdslen(deletedHash->ptr));
+        if ((deleted_hash = dictFetchValue(server.lua_name_sha,script_name))) {
+            addReplyBulkCBuffer(c, deleted_hash->ptr,
+                                sdslen(deleted_hash->ptr));
         }
         else {
             addReply(c, shared.noscripterr);
         }
-        dictDelete(server.lua_name_sha, scriptName);
+        dictDelete(server.lua_name_sha, script_name);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"kill")) {
         if (server.lua_caller == NULL) {
             addReplySds(c,sdsnew("-NOTBUSY No scripts in execution right now.\r\n"));

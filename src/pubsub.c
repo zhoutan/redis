@@ -246,7 +246,7 @@ int pubsubPublishMessage(redisClient *publisher, robj *channel, robj *message) {
                        if we have no publisher provided this time */
                     selectDb(c, 0);
                 }
-                enqueueAsyncScript(c, c->scriptName, 2, channel, message);
+                enqueueAsyncScript(c, c->script_name, 2, channel, message);
             } else {
                 addReply(c,shared.mbulkhdr[3]);
                 addReply(c,shared.messagebulk);
@@ -273,7 +273,7 @@ int pubsubPublishMessage(redisClient *publisher, robj *channel, robj *message) {
                     } else {
                         selectDb(pat->client, 0);
                     }
-                    enqueueAsyncScript(pat->client, pat->client->scriptName,
+                    enqueueAsyncScript(pat->client, pat->client->script_name,
                                       3, channel, message, pat->pattern);
                 } else {
                     addReply(pat->client,shared.mbulkhdr[4]);
@@ -308,9 +308,9 @@ void subscribeScriptCommand(redisClient *c) {
 
     for (j = 2; j < c->argc; j++) {
         char *script = c->argv[j]->ptr;
-        redisClient *scriptClient = clientForScript(script);
+        redisClient *script_client = clientForScript(script);
 
-        subs += pubsubSubscribeChannel(scriptClient,channel);
+        subs += pubsubSubscribeChannel(script_client,channel);
    }
    addReplyLongLong(c, subs);
 }
@@ -333,9 +333,9 @@ void unsubscribeScriptCommand(redisClient *c) {
 
     for (j = 2; j < c->argc; j++) {
         char *script = c->argv[j]->ptr;
-        redisClient *scriptClient = clientForScript(script);
+        redisClient *script_client = clientForScript(script);
 
-        unsubs += pubsubUnsubscribeChannel(scriptClient,channel,0);
+        unsubs += pubsubUnsubscribeChannel(script_client,channel,0);
    }
    addReplyLongLong(c, unsubs);
 }
@@ -354,9 +354,9 @@ void psubscribeScriptCommand(redisClient *c) {
 
     for (j = 2; j < c->argc; j++) {
         char *script = c->argv[j]->ptr;
-        redisClient *scriptClient = clientForScript(script);
+        redisClient *script_client = clientForScript(script);
 
-        subs += pubsubSubscribePattern(scriptClient,channel);
+        subs += pubsubSubscribePattern(script_client,channel);
    }
    addReplyLongLong(c, subs);
 }
@@ -379,9 +379,9 @@ void punsubscribeScriptCommand(redisClient *c) {
 
     for (j = 2; j < c->argc; j++) {
         char *script = c->argv[j]->ptr;
-        redisClient *scriptClient = clientForScript(script);
+        redisClient *script_client = clientForScript(script);
 
-        unsubs += pubsubUnsubscribePattern(scriptClient,channel,0);
+        unsubs += pubsubUnsubscribePattern(script_client,channel,0);
    }
    addReplyLongLong(c, unsubs);
 }

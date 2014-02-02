@@ -1226,69 +1226,67 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 }
 
 void executeAsyncScripts() {
-    if (!listLength(server.async_scripts)) {
-        return;
-    } else {
-        listNode *ln;
-        listIter li;
-        int j;
+    listNode *ln;
+    listIter li;
+    int j;
 
-        listRewind(server.async_scripts,&li);
-        while ((ln = listNext(&li)) != NULL) {
-            robj **scriptData = ln->value;
+    if (!listLength(server.async_scripts)) return;
 
-            /* get client */
-            redisClient *c = scriptData[0]->ptr;
+    listRewind(server.async_scripts,&li);
+    while ((ln = listNext(&li)) != NULL) {
+        robj **script_data = ln->value;
 
-            /* get script name */
-            char *scriptName = scriptData[1]->ptr;
+        /* get client */
+        redisClient *c = script_data[0]->ptr;
 
-            /* get arg count */
-            long argc = (long)scriptData[2]->ptr;
+        /* get script name */
+        char *script_name = script_data[1]->ptr;
 
-            /* get the DB for where this script was originally run */
-            c->db = (redisDb *)scriptData[3]->ptr;
+        /* get arg count */
+        long argc = (long)script_data[2]->ptr;
 
-            /* execute script */
-            if (argc == 2) {
-                evalNameWithArgs(c, scriptName, argc,
-                                 scriptData[4], scriptData[5]);
-            } else if (argc == 3) {
-                evalNameWithArgs(c, scriptName, argc,
-                                 scriptData[4], scriptData[5], scriptData[6]);
-            }
+        /* get the DB for where this script was originally run */
+        c->db = (redisDb *)script_data[3]->ptr;
 
-            /* clean up these used objects */
-            for (j = 0; j < argc + 4; j++) {
-                decrRefCount(scriptData[j]);
-            }
-
-            /* release our object holder */
-            zfree(scriptData);
-
-            /* delete from list of scripts to execute */
-            /* Yes, we can remove the element from the list
-               while we are iterating over the list. */
-            listDelNode(server.async_scripts, ln);
+        /* execute script */
+        if (argc == 2) {
+            evalNameWithArgs(c, script_name, argc,
+                             script_data[4], script_data[5]);
+        } else if (argc == 3) {
+            evalNameWithArgs(c, script_name, argc,
+                             script_data[4], script_data[5], script_data[6]);
         }
+
+        /* clean up these used objects */
+        for (j = 0; j < argc + 4; j++) {
+            decrRefCount(script_data[j]);
+        }
+
+        /* release our object holder */
+        zfree(script_data);
+
+        /* delete from list of scripts to execute */
+        /* Yes, we can remove the element from the list
+           while we are iterating over the list. */
+        listDelNode(server.async_scripts, ln);
     }
 }
 
-void enqueueAsyncScript(redisClient *c, char *scriptName, long argc, ...) {
+void enqueueAsyncScript(redisClient *c, char *script_name, long argc, ...) {
     va_list ap;
     int j;
     int total_args = argc + 4;
     robj **args = zmalloc(sizeof(*args)*total_args);
 
-    if (!scriptName)
+    if (!script_name)
         redisPanic("Async scripts must have a name or SHA provided.");
 
     /* Store the client to run the script against */
     args[0] = createObject(REDIS_STRING, c);
     args[0]->encoding = REDIS_ENCODING_INT; /* don't let obj system free it */
 
-    /* Store the name of the script to run (not necessarily c->scriptName) */
-    args[1] = createStringObject(scriptName, sdslen(scriptName));
+    /* Store the name of the script to run (not necessarily c->script_name) */
+    args[1] = createStringObject(script_name, sdslen(script_name));
 
     /* Store the argument count */
     args[2] = createObject(REDIS_STRING, NULL);
