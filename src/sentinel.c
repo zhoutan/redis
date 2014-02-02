@@ -555,7 +555,7 @@ void sentinelEvent(int level, char *type, sentinelRedisInstance *ri,
     if (level != REDIS_DEBUG) {
         channel = createStringObject(type,strlen(type));
         payload = createStringObject(msg,strlen(msg));
-        pubsubPublishMessage(channel,payload);
+        pubsubPublishMessage(NULL, channel,payload);
         decrRefCount(channel);
         decrRefCount(payload);
     }

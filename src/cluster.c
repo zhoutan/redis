@@ -1629,7 +1629,7 @@ int clusterProcessPacket(clusterLink *link) {
             message = createStringObject(
                         (char*)hdr->data.publish.msg.bulk_data+channel_len,
                         message_len);
-            pubsubPublishMessage(channel,message);
+            pubsubPublishMessage(NULL, channel,message);
             decrRefCount(channel);
             decrRefCount(message);
         }

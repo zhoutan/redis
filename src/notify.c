@@ -111,7 +111,7 @@ void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
         chan = sdscatlen(chan, "__:", 3);
         chan = sdscatsds(chan, key->ptr);
         chanobj = createObject(REDIS_STRING, chan);
-        pubsubPublishMessage(chanobj, eventobj);
+        pubsubPublishMessage(NULL, chanobj, eventobj);
         decrRefCount(chanobj);
     }
 
@@ -123,7 +123,7 @@ void notifyKeyspaceEvent(int type, char *event, robj *key, int dbid) {
         chan = sdscatlen(chan, "__:", 3);
         chan = sdscatsds(chan, eventobj->ptr);
         chanobj = createObject(REDIS_STRING, chan);
-        pubsubPublishMessage(chanobj, key);
+        pubsubPublishMessage(NULL, chanobj, key);
         decrRefCount(chanobj);
     }
     decrRefCount(eventobj);

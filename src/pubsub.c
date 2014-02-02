@@ -220,7 +220,7 @@ int pubsubUnsubscribeAllPatterns(redisClient *c, int notify) {
 }
 
 /* Publish a message */
-int pubsubPublishMessage(robj *channel, robj *message) {
+int pubsubPublishMessage(redisClient *publisher, robj *channel, robj *message) {
     int receivers = 0;
     dictEntry *de;
     listNode *ln;
@@ -238,6 +238,14 @@ int pubsubPublishMessage(robj *channel, robj *message) {
             redisClient *c = ln->value;
 
             if (c->flags & REDIS_PUBSUB_SCRIPT) {
+                if (publisher) {
+                    selectDb(c, publisher->db->id);
+                } else {
+                    /* reset the client back to 0
+                       so it doesn't linger on a previous set
+                       if we have no publisher provided this time */
+                    selectDb(c, 0);
+                }
                 enqueueAsyncScript(c, c->scriptName, 2, channel, message);
             } else {
                 addReply(c,shared.mbulkhdr[3]);
@@ -260,6 +268,11 @@ int pubsubPublishMessage(robj *channel, robj *message) {
                                 (char*)channel->ptr,
                                 sdslen(channel->ptr),0)) {
                 if (pat->client->flags & REDIS_PUBSUB_SCRIPT) {
+                    if (publisher) {
+                        selectDb(pat->client, publisher->db->id);
+                    } else {
+                        selectDb(pat->client, 0);
+                    }
                     enqueueAsyncScript(pat->client, pat->client->scriptName,
                                       3, channel, message, pat->pattern);
                 } else {
