@@ -1165,7 +1165,6 @@ void scriptCommand(redisClient *c) {
         incrRefCount(target_sha_obj);
 
         addReplyBulkCBuffer(c, script_name, sdslen(script_name));
-        forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
     } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"getname")) {
         sds script_name = c->argv[2]->ptr;
         robj *found_hash;
