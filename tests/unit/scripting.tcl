@@ -315,6 +315,101 @@ start_server {tags {"scripting"}} {
     } {102}
 }
 
+# Test pubsub scripting support
+start_server {tags {"scripting"}} {
+    set scriptHash 57c636e49637f5cd0adc571655c5f3a4d2ea8bf7
+
+    test {Load test script} {
+        r script load {
+            redis.call('lpush', 'keepers', ARGV[1])
+            redis.call('lpush', 'keepers', ARGV[2])
+        }
+    } $scriptHash
+
+    test {Attach name to script} {
+        r script name listPushingScript $scriptHash
+    } {listPushingScript}
+
+    test {Subscribe named script to pubsub channel} {
+        r ssubscribe scriptChannel listPushingScript
+    } {1}
+
+    test {Publish to test pubsub channel} {
+        r publish scriptChannel hellotest
+    } {1}
+
+    test {Read script result} {
+        wait_for_condition 50 100 {
+            [r exists keepers] == 1
+        } else {
+            fail "pubsub publish script didn't run properly"
+        }
+        r lrange keepers 0 -1
+    } {hellotest scriptChannel}
+
+    test {Unsubscribe script from pubsub channel} {
+        r sunsubscribe scriptChannel listPushingScript
+    } {1}
+
+    test {Unsubscribe script from pubsub channel (again)} {
+        r sunsubscribe scriptChannel listPushingScript
+    } {0}
+
+    test {Publish to test pubsub channel with no script} {
+        r publish scriptChannel hellotest
+    } {0}
+
+    test {Attach different name to script} {
+        r script name test-second $scriptHash
+    } {test-second}
+
+    test {Subscribe script to pattern channel} {
+        r spsubscribe "scriptChannel.helper.*" test-second
+    } {1}
+
+    test {Publish to non-matching pattern channel for script} {
+        r publish scriptChannel nothing
+    } {0}
+
+    test {Publish to pattern channel for script} {
+        r publish scriptChannel.helper.hello howdy
+    } {1}
+
+    test {Read pattern script result} {
+        wait_for_condition 50 100 {
+            [r llen keepers] > 2
+        } else {
+            fail "pubsub pattern publish script didn't run properly"
+        }
+        r lrange keepers 0 -1
+    } {howdy scriptChannel.helper.hello hellotest scriptChannel}
+
+    test {Script hash works in EVALNAME too} {
+        r evalname $scriptHash 0 evalname too
+    }
+
+    test {Read EVALNAME hash result} {
+        wait_for_condition 50 100 {
+            [r llen keepers] > 4
+        } else {
+            fail "EVALNAME script didn't run properly"
+        }
+        r lrange keepers 0 -1
+    } {too evalname howdy scriptChannel.helper.hello hellotest scriptChannel}
+
+    test {Unsubscribe from pattern channel} {
+        r spunsubscribe scriptChannel.helper.* test-second
+    } {1}
+
+    test {Unsubscribe from pattern channel (again)} {
+        r spunsubscribe scriptChannel.helper.* test-second
+    } {0}
+
+    test {Publish to pattern channel with no matching script} {
+        r publish scriptChannel.helper.hello howdy
+    } {0}
+}
+
 # Start a new server since the last test in this stanza will kill the
 # instance at all.
 start_server {tags {"scripting"}} {
