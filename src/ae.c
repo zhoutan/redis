@@ -39,6 +39,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include "ae.h"
 #include "zmalloc.h"
@@ -80,6 +81,10 @@ aeEventLoop *aeCreateEventLoop(int setsize) {
      * vector with it. */
     for (i = 0; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
+
+    pthread_mutexattr_settype(&eventLoop->mutexFileEventsAttr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&eventLoop->mutexFileEvents, &eventLoop->mutexFileEventsAttr);
+
     return eventLoop;
 
 err:
@@ -108,7 +113,12 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
 
     if (setsize == eventLoop->setsize) return AE_OK;
     if (eventLoop->maxfd >= setsize) return AE_ERR;
-    if (aeApiResize(eventLoop,setsize) == -1) return AE_ERR;
+
+    pthread_mutex_lock(&eventLoop->mutexFileEvents);
+    if (aeApiResize(eventLoop,setsize) == -1) {
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
+        return AE_ERR;
+    }
 
     eventLoop->events = zrealloc(eventLoop->events,sizeof(aeFileEvent)*setsize);
     eventLoop->fired = zrealloc(eventLoop->fired,sizeof(aeFiredEvent)*setsize);
@@ -118,10 +128,12 @@ int aeResizeSetSize(aeEventLoop *eventLoop, int setsize) {
      * an AE_NONE mask. */
     for (i = eventLoop->maxfd+1; i < setsize; i++)
         eventLoop->events[i].mask = AE_NONE;
+    pthread_mutex_unlock(&eventLoop->mutexFileEvents);
     return AE_OK;
 }
 
 void aeDeleteEventLoop(aeEventLoop *eventLoop) {
+    pthread_mutex_destroy(&eventLoop->mutexFileEvents);
     aeApiFree(eventLoop);
     zfree(eventLoop->events);
     zfree(eventLoop->fired);
@@ -135,29 +147,42 @@ void aeStop(aeEventLoop *eventLoop) {
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         aeFileProc *proc, void *clientData)
 {
+    pthread_mutex_lock(&eventLoop->mutexFileEvents);
     if (fd >= eventLoop->setsize) {
         errno = ERANGE;
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
         return AE_ERR;
     }
     aeFileEvent *fe = &eventLoop->events[fd];
 
-    if (aeApiAddEvent(eventLoop, fd, mask) == -1)
+    if (aeApiAddEvent(eventLoop, fd, mask) == -1) {
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
         return AE_ERR;
+    }
     fe->mask |= mask;
     if (mask & AE_READABLE) fe->rfileProc = proc;
     if (mask & AE_WRITABLE) fe->wfileProc = proc;
     fe->clientData = clientData;
     if (fd > eventLoop->maxfd)
         eventLoop->maxfd = fd;
+
+    pthread_mutex_unlock(&eventLoop->mutexFileEvents);
     return AE_OK;
 }
 
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
 {
-    if (fd >= eventLoop->setsize) return;
+    pthread_mutex_lock(&eventLoop->mutexFileEvents);
+    if (fd >= eventLoop->setsize) {
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
+        return;
+    }
     aeFileEvent *fe = &eventLoop->events[fd];
 
-    if (fe->mask == AE_NONE) return;
+    if (fe->mask == AE_NONE) {
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
+        return;
+    }
     fe->mask = fe->mask & (~mask);
     if (fd == eventLoop->maxfd && fe->mask == AE_NONE) {
         /* Update the max fd */
@@ -168,12 +193,15 @@ void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask)
         eventLoop->maxfd = j;
     }
     aeApiDelEvent(eventLoop, fd, mask);
+    pthread_mutex_unlock(&eventLoop->mutexFileEvents);
 }
 
 int aeGetFileEvents(aeEventLoop *eventLoop, int fd) {
+    pthread_mutex_lock(&eventLoop->mutexFileEvents);
     if (fd >= eventLoop->setsize) return 0;
     aeFileEvent *fe = &eventLoop->events[fd];
 
+    pthread_mutex_unlock(&eventLoop->mutexFileEvents);
     return fe->mask;
 }
 
@@ -397,6 +425,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
         }
 
+        pthread_mutex_lock(&eventLoop->mutexFileEvents);
         numevents = aeApiPoll(eventLoop, tvp);
         for (j = 0; j < numevents; j++) {
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
@@ -417,6 +446,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             }
             processed++;
         }
+        pthread_mutex_unlock(&eventLoop->mutexFileEvents);
     }
     /* Check time events */
     if (flags & AE_TIME_EVENTS)

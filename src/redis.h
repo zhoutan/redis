@@ -69,7 +69,7 @@
 /* Static server configuration */
 #define REDIS_DEFAULT_HZ        10      /* Time interrupt calls/sec. */
 #define REDIS_MIN_HZ            1
-#define REDIS_MAX_HZ            500 
+#define REDIS_MAX_HZ            500
 #define REDIS_SERVERPORT        6379    /* TCP port */
 #define REDIS_TCP_BACKLOG       511     /* TCP listen backlog */
 #define REDIS_MAXIDLETIME       0       /* default client timeout: infinite */
@@ -613,6 +613,43 @@ typedef struct redisOpArray {
 
 struct clusterState;
 
+typedef struct evalThread {
+    lua_State *lua; /* The Lua interpreter */
+    lua_State *lua_thread;     /* The lua thread where async scripts are run */
+    struct redisClient *lua_client;   /* The "fake client" to query Redis from Lua */
+    pthread_mutex_t lua_yield_mutex; /* The mutex to allow async scripts to yield
+                                        and run commands inside the event loop. */
+    pthread_cond_t lua_yield_cond; /* The condition variable that signals that the
+                                    command has been executed and that the thread
+                                    can be resumed. */
+    pthread_t thread;
+
+    // Current script variables:
+    mstime_t lua_time_start;  /* Start time of script, milliseconds time */
+    int lua_write_dirty;  /* True if a write command was called during the
+                             execution of the current script. */
+    int lua_random_dirty; /* True if a random command was called during the
+                             execution of the current script. */
+    int lua_timedout;     /* True if we reached the time limit for script
+                             execution. */
+    int lua_kill;         /* Kill the script if true. */
+
+} evalThread;
+
+typedef struct evalTask {
+    evalThread *eval_thread;
+    redisClient *caller; /* The redis client that triggered the execution */
+    int evalsha;
+    int evalasync;
+    int argc;
+    robj **argv;
+    long long numkeys;
+    struct redisCommand *script_cmd; /* The next command that should be run */
+    struct redisCommand *script_lastcmd; /* The last command executed */
+    sds script_cmd_reply; /* The last command result */
+    int terminator; /* If true, worker should exit */
+} evalTask;
+
 struct redisServer {
     /* General */
     char *configfile;           /* Absolute config file path, or NULL */
@@ -823,19 +860,15 @@ struct redisServer {
     struct clusterState *cluster;  /* State of the cluster */
     int cluster_migration_barrier; /* Cluster replicas migration barrier. */
     /* Scripting */
-    lua_State *lua; /* The Lua interpreter. We use just one for all clients */
-    redisClient *lua_client;   /* The "fake client" to query Redis from Lua */
     redisClient *lua_caller;   /* The client running EVAL right now, or NULL */
     dict *lua_scripts;         /* A dictionary of SHA1 -> Lua scripts */
     mstime_t lua_time_limit;  /* Script timeout in milliseconds */
-    mstime_t lua_time_start;  /* Start time of script, milliseconds time */
-    int lua_write_dirty;  /* True if a write command was called during the
-                             execution of the current script. */
-    int lua_random_dirty; /* True if a random command was called during the
-                             execution of the current script. */
-    int lua_timedout;     /* True if we reached the time limit for script
-                             execution. */
-    int lua_kill;         /* Kill the script if true. */
+    evalThread *eval_thread;
+    list *evalasync_executors;      /* The list of EVALASYNC workers */
+    list *evalasync_tasks;          /* The list of EVALASYNC tasks to be executed */
+    pthread_mutex_t evalasync_queue_mutex;
+    pthread_cond_t evalasync_queue_cond;
+
     /* Assert & bug reporting */
     char *assert_failed;
     char *assert_file;
@@ -1449,6 +1482,8 @@ void objectCommand(redisClient *c);
 void clientCommand(redisClient *c);
 void evalCommand(redisClient *c);
 void evalShaCommand(redisClient *c);
+void evalAsyncCommand(redisClient *c);
+void evalShaAsyncCommand(redisClient *c);
 void scriptCommand(redisClient *c);
 void timeCommand(redisClient *c);
 void bitopCommand(redisClient *c);

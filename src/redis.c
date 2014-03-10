@@ -263,6 +263,8 @@ struct redisCommand redisCommandTable[] = {
     {"client",clientCommand,-2,"ar",0,NULL,0,0,0,0,0},
     {"eval",evalCommand,-3,"s",0,evalGetKeys,0,0,0,0,0},
     {"evalsha",evalShaCommand,-3,"s",0,evalGetKeys,0,0,0,0,0},
+    {"evalasync",evalAsyncCommand,-3,"s",0,evalGetKeys,0,0,0,0,0},
+    {"evalshaasync",evalShaAsyncCommand,-3,"s",0,evalGetKeys,0,0,0,0,0},
     {"slowlog",slowlogCommand,-2,"r",0,NULL,0,0,0,0,0},
     {"script",scriptCommand,-2,"ras",0,NULL,0,0,0,0,0},
     {"time",timeCommand,1,"rR",0,NULL,0,0,0,0,0},
@@ -1430,10 +1432,8 @@ void initServerConfig() {
     server.cluster_node_timeout = REDIS_CLUSTER_DEFAULT_NODE_TIMEOUT;
     server.cluster_migration_barrier = REDIS_CLUSTER_DEFAULT_MIGRATION_BARRIER;
     server.cluster_configfile = zstrdup(REDIS_DEFAULT_CLUSTER_CONFIG_FILE);
-    server.lua_caller = NULL;
+    server.lua_caller = NULL; // TODO: Should be a list?
     server.lua_time_limit = REDIS_LUA_TIME_LIMIT;
-    server.lua_client = NULL;
-    server.lua_timedout = 0;
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
     server.loading_process_events_interval_bytes = (1024*1024*2);
 
@@ -2196,7 +2196,7 @@ int processCommand(redisClient *c) {
     }
 
     /* Lua script too slow? Only allow a limited number of commands. */
-    if (server.lua_timedout &&
+    if (server.eval_thread->lua_timedout &&
           c->cmd->proc != authCommand &&
           c->cmd->proc != replconfCommand &&
         !(c->cmd->proc == shutdownCommand &&
@@ -2515,7 +2515,7 @@ sds genRedisInfoString(char *section) {
             server.resident_set_size,
             server.stat_peak_memory,
             peak_hmem,
-            ((long long)lua_gc(server.lua,LUA_GCCOUNT,0))*1024LL,
+            (long long) 0, //TODO: Sum memory of all lua states: ((long long)lua_gc(server.lua,LUA_GCCOUNT,0))*1024LL,
             zmalloc_get_fragmentation_ratio(server.resident_set_size),
             ZMALLOC_LIB
             );
