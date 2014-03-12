@@ -545,6 +545,7 @@ void scriptingInit(void) {
      * This is useful for replication, as we need to replicate EVALSHA
      * as EVAL, so we need to remember the associated script. */
     server.lua_scripts = dictCreate(&shaScriptObjectDictType,NULL);
+    server.lua_name_sha = dictCreate(&dbDictType,NULL);
 
     /* Register the redis commands table and fields */
     lua_newtable(lua);
@@ -662,6 +663,7 @@ void scriptingInit(void) {
  * This function is used in order to reset the scripting environment. */
 void scriptingRelease(void) {
     dictRelease(server.lua_scripts);
+    dictRelease(server.lua_name_sha);
     lua_close(server.lua);
 }
 
@@ -963,6 +965,16 @@ void evalGenericCommand(redisClient *c, int evalsha) {
     }
 }
 
+/* Move argv[1] to be the SHA found from <name> */
+/* evalGeneric assumes we're running "evalsha <SHA>"
+   By making argv[1] the SHA, we are essentially running
+   "evalsha <SHA>" for the user. */
+void evalSha(redisClient *c, char *sha) {
+    /* verify argv[1] will always exist on the client */
+    c->argv[1]->ptr = sha;
+    evalGenericCommand(c,1);
+}
+
 void evalCommand(redisClient *c) {
     evalGenericCommand(c,0);
 }
@@ -977,6 +989,15 @@ void evalShaCommand(redisClient *c) {
         return;
     }
     evalGenericCommand(c,1);
+}
+
+void evalNameCommand(redisClient *c) {
+    sds sha = dictFetchValue(server.lua_name_sha,c->argv[1]->ptr);
+    if (!sha || sdslen(sha) != 40) {
+        addReply(c, shared.noscripterr);
+        return;
+    }
+    evalSha(c, sha);
 }
 
 /* We replace math.random() with our implementation that is not affected
@@ -1056,6 +1077,42 @@ void scriptCommand(redisClient *c) {
         addReplyBulkCBuffer(c,funcname+2,40);
         sdsfree(sha);
         forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
+    } else if (c->argc == 4 && !strcasecmp(c->argv[1]->ptr,"name")) {
+        sds scriptName = c->argv[2]->ptr;
+        sds targetSha = c->argv[3]->ptr;
+
+        /* Check if target hash is exactly 40 characters and actually exists */
+        if (sdslen(targetSha) != 40 ||
+            dictFind(server.lua_scripts,targetSha) == NULL) {
+            addReply(c, shared.noscripterr);
+            return;
+        }
+
+        dictAdd(server.lua_name_sha,sdsdup(scriptName),sdsdup(targetSha));
+
+        addReplyBulkCBuffer(c, scriptName, sdslen(scriptName));
+        forceCommandPropagation(c,REDIS_PROPAGATE_REPL|REDIS_PROPAGATE_AOF);
+    } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"getname")) {
+        sds scriptName = c->argv[2]->ptr;
+        sds foundHash;
+
+        if ((foundHash = dictFetchValue(server.lua_name_sha,scriptName))) {
+            addReplyBulkCBuffer(c, foundHash, sdslen(foundHash));
+        }
+        else {
+            addReply(c, shared.noscripterr);
+        }
+    } else if (c->argc == 3 && !strcasecmp(c->argv[1]->ptr,"delname")) {
+        sds scriptName = c->argv[2]->ptr;
+        sds deletedHash;
+
+        if ((deletedHash = dictFetchValue(server.lua_name_sha,scriptName))) {
+            addReplyBulkCBuffer(c, deletedHash, sdslen(deletedHash));
+        }
+        else {
+            addReply(c, shared.noscripterr);
+        }
+        dictDelete(server.lua_name_sha, scriptName);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"kill")) {
         if (server.lua_caller == NULL) {
             addReplySds(c,sdsnew("-NOTBUSY No scripts in execution right now.\r\n"));
