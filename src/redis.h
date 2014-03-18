@@ -1038,7 +1038,8 @@ void addReplyMultiBulkLen(redisClient *c, long length);
 void copyClientOutputBuffer(redisClient *dst, redisClient *src);
 void *dupClientReplyValue(void *o);
 void getClientsMaxBuffers(unsigned long *longest_output_list,
-                          unsigned long *biggest_input_buffer);
+                          unsigned long *biggest_input_buffer,
+                          unsigned long *bytes_output_buffers);
 void formatPeerId(char *peerid, size_t peerid_len, char *ip, int port);
 char *getClientPeerId(redisClient *client);
 sds catClientInfoString(sds s, redisClient *client);
