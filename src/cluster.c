@@ -2259,6 +2259,15 @@ void clusterPropagatePublish(robj *channel, robj *message) {
     clusterSendPublish(NULL, channel, message);
 }
 
+/* This is an extremely poor version of sentinelEvent() */
+void clusterPublishStateUpdate() {
+    robj *channel = createObject(REDIS_STRING, sdsnew("__cluster__:state"));
+    robj *msg = createObject(REDIS_STRING,
+        sdscatprintf(sdsempty(), "changed:%llu",
+        (unsigned long long)server.cluster->currentEpoch));
+    clusterPropagatePublish(channel, msg);
+}
+
 /* -----------------------------------------------------------------------------
  * SLAVE node specific functions
  * -------------------------------------------------------------------------- */
@@ -2696,6 +2705,9 @@ void clusterHandleSlaveFailover(void) {
 
         /* 6) If there was a manual failover in progress, clear the state. */
         resetManualFailover();
+
+        /* 7) PUBLISH a notice about the cluster state update */
+        clusterPublishStateUpdate();
     } else {
         clusterLogCantFailover(REDIS_CLUSTER_CANT_FAILOVER_WAITING_VOTES);
     }
