@@ -422,6 +422,33 @@ robj *tryObjectEncoding(robj *o) {
     return o;
 }
 
+robj *tryCachedObjectEncoding(robj *o) {
+    if (!sdsEncodedObject(o)) return o;
+
+    robj *cached;
+    /* The current object is a string, so check if we have it cached already. */
+    if ((cached = dictFetchValue(server.shared_str, o->ptr))) {
+        incrRefCount(cached);
+        decrRefCount(o);
+        return cached;
+    } else {
+        /* Else, we don't have it cached.  Try to encode and cache. */
+        robj *encoded = tryObjectEncoding(o);
+
+        /* If the encoded value isn't a string anymore, return encoded */
+        if (!sdsEncodedObject(encoded)) return encoded;
+
+        /* Yes, we're using the string *inside* the object as the key.
+         * Haven't thought through of it's completely safe or not, but
+         * it saves us from double storing the same string.
+         * The entry should be removed from the dict before
+         * encoded->refcount == 0 to prevent bad things from happening. */
+        dictAdd(server.shared_str, encoded->ptr, encoded);
+        incrRefCount(encoded);
+        return encoded;
+    }
+}
+
 /* Get a decoded version of an encoded object (returned as a new object).
  * If the object is already raw-encoded just increment the ref count. */
 robj *getDecodedObject(robj *o) {

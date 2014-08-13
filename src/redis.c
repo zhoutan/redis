@@ -636,6 +636,16 @@ dictType migrateCacheDictType = {
     NULL                        /* val destructor */
 };
 
+/* Shared string cache dict type. */
+dictType sharedStringCacheDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
+};
+
 /* Replication cached script dict (server.repl_scriptcache_dict).
  * Keys are sds SHA1 strings, while values are not used at all in the current
  * implementation. */
@@ -1459,6 +1469,8 @@ void initServerConfig() {
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.loading_process_events_interval_bytes = (1024*1024*2);
+    server.shared_str = dictCreate(&sharedStringCacheDictType,NULL);
+    dictExpand(server.shared_str, 1000);
 
     server.lruclock = getLRUClock();
     resetServerSaveParams();

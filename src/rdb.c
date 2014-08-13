@@ -938,7 +938,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb) {
             value = rdbLoadEncodedStringObject(rdb);
             if (value == NULL) return NULL;
 
-            field = tryObjectEncoding(field);
+            field = tryCachedObjectEncoding(field);
             value = tryObjectEncoding(value);
 
             /* Add pair to hash table */

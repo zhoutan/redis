@@ -55,7 +55,7 @@ void hashTypeTryConversion(robj *o, robj **argv, int start, int end) {
 /* Encode given objects in-place when the hash uses a dict. */
 void hashTypeTryObjectEncoding(robj *subject, robj **o1, robj **o2) {
     if (subject->encoding == REDIS_ENCODING_HT) {
-        if (o1) *o1 = tryObjectEncoding(*o1);
+        if (o1) *o1 = tryCachedObjectEncoding(*o1);
         if (o2) *o2 = tryObjectEncoding(*o2);
     }
 }
