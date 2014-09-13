@@ -484,6 +484,37 @@ void addReplyMultiBulkLen(redisClient *c, long length) {
         addReplyLongLongWithPrefix(c,length,'*');
 }
 
+size_t countDigits(int64_t d) {
+    size_t l = 0;
+    if (d < 0) {
+        d = -d;
+        l = 1;
+    } else {
+        l = 0;
+    }
+    if (d > 10000000000) goto its_really_big;
+    if (d < 10) return 1 + l;
+    if (d < 100) return 2 + l;
+    if (d < 1000) return 3 + l;
+    if (d < 10000) return 4 + l;
+    if (d < 100000) return 5 + l;
+    if (d < 1000000) return 6 + l;
+    if (d < 10000000) return 7 + l;
+    if (d < 100000000) return 8 + l;
+    if (d < 1000000000) return 9 + l;
+    if (d < 10000000000) return 10 + l;
+its_really_big:
+    if (d < 100000000000) return 11 + l;
+    if (d < 1000000000000) return 12 + l;
+    if (d < 10000000000000) return 13 + l;
+    if (d < 100000000000000) return 14 + l;
+    if (d < 1000000000000000) return 15 + l;
+    if (d < 10000000000000000) return 16 + l;
+    if (d < 100000000000000000) return 17 + l;
+    if (d < 1000000000000000000) return 18 + l;
+    return 19 + l;
+}
+
 /* Create the length prefix of a bulk reply, example: $2234 */
 void addReplyBulkLen(redisClient *c, robj *obj) {
     size_t len;
@@ -494,14 +525,7 @@ void addReplyBulkLen(redisClient *c, robj *obj) {
         long n = (long)obj->ptr;
 
         /* Compute how many bytes will take this integer as a radix 10 string */
-        len = 1;
-        if (n < 0) {
-            len++;
-            n = -n;
-        }
-        while((n = n/10) != 0) {
-            len++;
-        }
+        len = countDigits(n);
     }
 
     if (len < REDIS_SHARED_BULKHDR_LEN)
