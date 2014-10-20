@@ -920,6 +920,10 @@ struct redisServer {
     int watchdog_period;  /* Software watchdog period in ms. 0 = off */
     /* System hardware info */
     size_t system_memory_size;  /* Total memory in system as reported by OS */
+    /* Process Title Formatting */
+    char *argv0;          /* Server's initial argv[0] */
+    char *name;           /* Name for server configured by the user */
+    int update_proctitle; /* Flag for serverCron() to update title */
 };
 
 typedef struct pubsubPattern {
@@ -1002,6 +1006,8 @@ typedef struct {
 #define REDIS_HASH_KEY 1
 #define REDIS_HASH_VALUE 2
 
+#define PROCTITLE_UPDATE() (server.update_proctitle = 1)
+
 /*-----------------------------------------------------------------------------
  * Extern declarations
  *----------------------------------------------------------------------------*/
@@ -1029,7 +1035,7 @@ void getRandomHexChars(char *p, unsigned int len);
 uint64_t crc64(uint64_t crc, const unsigned char *s, uint64_t l);
 void exitFromChild(int retcode);
 size_t redisPopcount(void *s, long count);
-void redisSetProcTitle(char *title);
+void redisSetProcTitle(char *comment);
 
 /* networking.c -- Networking and Client related operations */
 redisClient *createClient(int fd);
@@ -1186,6 +1192,7 @@ int replicationCountAcksByOffset(long long offset);
 void replicationSendNewlineToMaster(void);
 long long replicationGetSlaveOffset(void);
 char *replicationGetSlaveName(redisClient *c);
+char *slaveDesc(void);
 
 /* Generic persistence functions */
 void startLoading(FILE *fp);
@@ -1366,6 +1373,7 @@ void clusterCron(void);
 void clusterPropagatePublish(robj *channel, robj *message);
 void migrateCloseTimedoutSockets(void);
 void clusterBeforeSleep(void);
+sds clusterSelfDesc(void);
 
 /* Sentinel */
 void initSentinelConfig(void);
@@ -1373,6 +1381,7 @@ void initSentinel(void);
 void sentinelTimer(void);
 char *sentinelHandleConfiguration(char **argv, int argc);
 void sentinelIsRunning(void);
+sds sentinelWatchingMasters(void);
 
 /* Scripting */
 void scriptingInit(void);
