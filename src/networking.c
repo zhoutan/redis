@@ -594,7 +594,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
                 redisLog(REDIS_WARNING,
-                    "Accepting client connection: %s", server.neterr);
+                    "Error accepting client connection: %s", server.neterr);
             return;
         }
         redisLog(REDIS_VERBOSE,"Accepted %s:%d", cip, cport);
@@ -613,7 +613,7 @@ void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
                 redisLog(REDIS_WARNING,
-                    "Accepting client connection: %s", server.neterr);
+                    "Error accepting client connection: %s", server.neterr);
             return;
         }
         redisLog(REDIS_VERBOSE,"Accepted connection to %s", server.unixsocket);
@@ -631,7 +631,7 @@ void acceptInheritedHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         if (cfd == ANET_ERR) {
             if (errno != EWOULDBLOCK)
                 redisLog(REDIS_WARNING,
-                    "Accepting client connection: %s", server.neterr);
+                    "Error accepting client connection: %s", server.neterr);
             return;
         }
         redisLog(REDIS_VERBOSE,"Accepted connection to inherited socket #%d", nsock);
