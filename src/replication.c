@@ -1468,6 +1468,15 @@ void slaveofCommand(redisClient *c) {
     } else {
         long port;
 
+        char *ip = c->argv[1]->ptr;
+        char ipbuf[REDIS_IP_STR_LEN];
+        if (anetResolve(NULL, ip, ipbuf, sizeof(ipbuf)) == ANET_OK) {
+            ip = ipbuf;
+        } else {
+            addReplyErrorFormat(c, "Can't resolve hostname %s", ip);
+            return;
+        }
+
         if ((getLongFromObjectOrReply(c, c->argv[2], &port, NULL) != REDIS_OK))
             return;
 
@@ -1480,7 +1489,7 @@ void slaveofCommand(redisClient *c) {
         }
         /* There was no previous master or the user specified a different one,
          * we can continue. */
-        replicationSetMaster(c->argv[1]->ptr, port);
+        replicationSetMaster(ip, port);
         redisLog(REDIS_NOTICE,"SLAVE OF %s:%d enabled (user request)",
             server.masterhost, server.masterport);
     }
