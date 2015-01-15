@@ -68,7 +68,7 @@ proc spawn_instance {type base_port count {conf {}}} {
         }
 
         if {$::valgrind} {
-            set pid [exec valgrind --track-origins=yes --suppressions=../../../src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full ../../../src/${prgname} $cfgfile &]
+            set pid [exec valgrind --gen-suppressions=all --track-origins=yes --suppressions=../../../src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full ../../../src/${prgname} $cfgfile &]
         } else {
             set pid [exec ../../../src/${prgname} $cfgfile &]
         }
@@ -418,7 +418,7 @@ proc restart_instance {type id} {
     }
 
     if {$::valgrind} {
-        set pid [exec valgrind --track-origins=yes --suppressions=../../../src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full ../../../src/${prgname} $cfgfile &]
+        set pid [exec valgrind --gen-suppressions=all --track-origins=yes --suppressions=../../../src/valgrind.sup --show-reachable=no --show-possibly-lost=no --leak-check=full ../../../src/${prgname} $cfgfile &]
     } else {
         set pid [exec ../../../src/${prgname} $cfgfile &]
     }
